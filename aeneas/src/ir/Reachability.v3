@@ -589,6 +589,8 @@ class RaClass extends RaType {
 	var minClassId = -1;			// minimum class ID
 	var maxClassId = -1;			// maximum class ID
 	var dataNorm: DataNorm;			// non-null for flattened variants
+	var unboxedVariantNorm: UnboxedVariantNorm; // non-null for variant superclasses with unboxed cases
+	var unboxedVariantCaseNorm: UnboxedVariantCaseNorm; // non-null for unboxed variant classes
 	var newIrType: Type;
 
 	new(oldType: Type, orig, parent) super(oldType) {

@@ -236,6 +236,7 @@ component Parser {
 				else members = parseMembers(p);
 				var decl = desugar.synthesizeVariantCaseMember(id, params, members);
 				decl.repHint = repHint;
+				decl.decl.repHint = repHint;
 				return List.new(decl, prev);
 			}
 		}

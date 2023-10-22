@@ -138,3 +138,20 @@ class DataNorm extends TypeNorm {
 		super(oldType, newType, sub) {
 	}
 }
+
+class UnboxedVariantNorm extends TypeNorm {
+	def tagType: IntType;
+
+	new (oldType: Type, newType: Type, tagType, sub: Array<Type>)
+		super(oldType, newType, sub) {
+	}
+}
+
+class UnboxedVariantCaseNorm extends TypeNorm {
+	var variantNorm: UnboxedVariantNorm;
+	def fieldIndexes: Array<Array<int>>;
+
+	new (oldType: Type, newType: Type, sub: Array<Type>)
+		super(oldType, newType, sub) {
+	}
+}
