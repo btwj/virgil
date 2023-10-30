@@ -293,11 +293,19 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 	// unbox variant using new strategy
 	def tryUnboxingVariant(rc: RaClass) -> bool {
 		Terminal.put1("unboxing variant %q\n", rc.oldType.render);
+		
 		var vecO = Vector<Type>.new();
 		var vecT = Vector<Type>.new();
+		var indexes = Vector<Array<int>>.new();
+
 		for (l = rc.children; l != null; l = l.tail) {
+			Terminal.put1("  unboxing case %q\n", l.head.oldType.render);
+
 			var c = l.head;
 			var of = c.orig.fields;
+
+			var classFields = Vector<Type>.new();
+			var indexesUsed = Vector<int>.new();
 
 			for (i < of.length) {
 				var rf = c.fields[i];
@@ -305,6 +313,7 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 
 				var nf = Vector<Type>.new();
 				var curMapping = Vector<int>.new();
+
 				if (rf.typeNorm != null) {
 					rf.typeNorm.addTo(nf);
 				} else if (rf.fieldType != null) {
@@ -316,27 +325,50 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 
 				// TODO: find ref field for boxed
 				for (j < nf.length) {
+					var assigned = -1;
+
+					// Try to find an existing field to use
 					for (k < vecT.length) {
 						var alreadyUsed = false;
 						// XXX: Inefficient
-						for (t in curMapping.array) if (t == k) alreadyUsed = true;
+						for (t < indexesUsed.length) if (indexesUsed[t] == k) alreadyUsed = true;
 
 						if (!alreadyUsed && config.typesCompatible(nf[j], vecT[k])) {
-							curMapping.put(k);
-						} else {
-							var m = vecT.length;
-							vecT.put(nf[j]);
-							curMapping.put(m);
+							assigned = k;
+							break;
 						}
 					}
+
+					if (assigned >= 0) {
+						// Terminal.put("    found existing\n");
+						curMapping.put(assigned);
+						indexesUsed.put(assigned);
+					} else {
+						// Terminal.put("    putting into vecT\n");
+						var m = vecT.length;
+						vecT.put(nf[j]);
+						curMapping.put(m);
+						indexesUsed.put(m);
+					}
+					classFields.put(nf[j]);
 
 					var fieldType = of[i].fieldType.substitute(V3.getTypeArgs(rc.oldType));
 					norm(fieldType).addTo(vecO);
 				}
+
+				indexes.put(curMapping.extract());
 			}
+
+			var classFieldsArray = classFields.extract();
 			
-			c.unboxedVariantCaseNorm = UnboxedVariantCaseNorm.new(c.oldType, Tuple.newType(Lists.fromArray(vecO.extract())), vecT.extract());
+			c.unboxedVariantCaseNorm = UnboxedVariantCaseNorm.new(
+				c.oldType, Tuple.newType(Lists.fromArray(classFieldsArray)), classFieldsArray, indexes.extract());
+			Terminal.put1("    unboxed norm %q\n", c.unboxedVariantCaseNorm.render);
 		}
+
+		var vecTArray = vecT.extract();
+		rc.unboxedVariantNorm = UnboxedVariantNorm.new(rc.oldType, Tuple.newType(Lists.fromArray(vecTArray)), Int.TYPE, vecTArray);
+		Terminal.put1("  unboxed norm %q\n", rc.unboxedVariantNorm.render);
 
 		return false;
 	}
