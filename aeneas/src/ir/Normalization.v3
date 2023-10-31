@@ -270,6 +270,7 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 	// lay out a variant's fields, which may be flattened
 	def normVariant(t: Type, rc: RaClass) -> TypeNorm {
 		if (rc.dataNorm != null) return rc.dataNorm; // already unboxed
+		if (rc.unboxedVariantCaseNorm != null) return rc.unboxedVariantCaseNorm;
 		if (rc.orig.boxing == Boxing.BOXED) mapSimple(t); // XXX, ugly, don't recurse through explicitly boxed types
 
 		match (rc.recursive) {
@@ -294,15 +295,25 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 	def tryUnboxingVariant(rc: RaClass) -> bool {
 		Terminal.put1("unboxing variant %q\n", rc.oldType.render);
 		
-		var vecO = Vector<Type>.new();
 		var vecT = Vector<Type>.new();
 		var indexes = Vector<Array<int>>.new();
 
+		var tagType = V3.getVariantTagType(rc.oldType);
+		var allUnboxed = rc.orig.boxing == Boxing.UNBOXED;
+
 		for (l = rc.children; l != null; l = l.tail) {
-			Terminal.put1("  unboxing case %q\n", l.head.oldType.render);
+			if (!allUnboxed && rc.orig.boxing != Boxing.UNBOXED) {
+				// Box this case
+				Terminal.put1("      boxed %q: ", l.head.oldType.render);
+				continue;
+			}
+			Terminal.put1("    unboxed %q: ", l.head.oldType.render);
 
 			var c = l.head;
 			var of = c.orig.fields;
+
+			var vecO = Vector<Type>.new();
+			var origRanges = Array<(int, int)>.new(of.length);
 
 			var classFields = Vector<Type>.new();
 			var indexesUsed = Vector<int>.new();
@@ -333,6 +344,7 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 						// XXX: Inefficient
 						for (t < indexesUsed.length) if (indexesUsed[t] == k) alreadyUsed = true;
 
+						// TODO: replace with supertype?
 						if (!alreadyUsed && config.typesCompatible(nf[j], vecT[k])) {
 							assigned = k;
 							break;
@@ -340,35 +352,42 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 					}
 
 					if (assigned >= 0) {
-						// Terminal.put("    found existing\n");
 						curMapping.put(assigned);
 						indexesUsed.put(assigned);
 					} else {
-						// Terminal.put("    putting into vecT\n");
 						var m = vecT.length;
 						vecT.put(nf[j]);
 						curMapping.put(m);
 						indexesUsed.put(m);
 					}
 					classFields.put(nf[j]);
-
-					var fieldType = of[i].fieldType.substitute(V3.getTypeArgs(rc.oldType));
-					norm(fieldType).addTo(vecO);
 				}
+				var origStart = vecO.length;
 
+				var fieldType = of[i].fieldType.substitute(V3.getTypeArgs(rc.oldType));
+				norm(fieldType).addTo(vecO);
+
+				origRanges[i] = (origStart, vecO.length);
 				indexes.put(curMapping.extract());
 			}
 
+			classFields.put(tagType);
 			var classFieldsArray = classFields.extract();
 			
 			c.unboxedVariantCaseNorm = UnboxedVariantCaseNorm.new(
-				c.oldType, Tuple.newType(Lists.fromArray(classFieldsArray)), classFieldsArray, indexes.extract());
-			Terminal.put1("    unboxed norm %q\n", c.unboxedVariantCaseNorm.render);
+				c.oldType, Tuple.newType(Lists.fromArray(classFieldsArray)), classFieldsArray, indexes.extract(), origRanges);
+			Terminal.put1("norm %q\n", c.unboxedVariantCaseNorm.render);
 		}
 
+		vecT.put(tagType);
 		var vecTArray = vecT.extract();
-		rc.unboxedVariantNorm = UnboxedVariantNorm.new(rc.oldType, Tuple.newType(Lists.fromArray(vecTArray)), Int.TYPE, vecTArray);
-		Terminal.put1("  unboxed norm %q\n", rc.unboxedVariantNorm.render);
+		rc.unboxedVariantNorm = UnboxedVariantNorm.new(rc.oldType, Tuple.newType(Lists.fromArray(vecTArray)), tagType, vecTArray);
+		
+		for (l = rc.children; l != null; l = l.tail) {
+			l.head.unboxedVariantCaseNorm.variantNorm = rc.unboxedVariantNorm;
+		}
+
+		Terminal.put1("    norm %q\n", rc.unboxedVariantNorm.render);
 
 		return false;
 	}

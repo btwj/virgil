@@ -150,8 +150,9 @@ class UnboxedVariantNorm extends TypeNorm {
 class UnboxedVariantCaseNorm extends TypeNorm {
 	var variantNorm: UnboxedVariantNorm;
 	def fieldIndexes: Array<Array<int>>;
+	def origRanges: Array<(int, int)>;
 
-	new (oldType: Type, newType: Type, sub: Array<Type>, fieldIndexes)
+	new (oldType: Type, newType: Type, sub: Array<Type>, fieldIndexes, origRanges)
 		super(oldType, newType, sub) {
 	}
 

@@ -205,6 +205,10 @@ class SsaRaNormalizer extends SsaRebuilder {
 					if (rc.dataNorm.tagType != null) return map1(app, genRef1(args[0]));
 					return map1(app, newGraph.zeroConst());
 				}
+				if (rc.unboxedVariantCaseNorm != null || rc.unboxedVariantNorm != null) {
+					var newArgs = genRefs(args);
+					return map1(app, newArgs[newArgs.length - 1]);
+				}
 				else normDefault(app, op);
 			}
 			VariantGetField(field) =>	normGetField(true, app, field, op);
@@ -617,6 +621,9 @@ class SsaRaNormalizer extends SsaRebuilder {
 	}
 	def normTypeSubsume(oldInstr: SsaApplyOp, op: Operator) {
 		var atn = normTypeArg(op, 0), rtn = normTypeArg(op, 1);
+		if (UnboxedVariantCaseNorm.?(atn) || UnboxedVariantCaseNorm.?(rtn) ) {
+			return mapNnf(oldInstr, genRefs(oldInstr.inputs));
+		}
 		if (rtn.sub == null) {
 			// common case 1-1 mapping
 			return map1(oldInstr, curBlock.opTypeSubsume(atn.newType, rtn.newType, genRef1(oldInstr.inputs[0])));
@@ -1061,6 +1068,19 @@ class SsaRaNormalizer extends SsaRebuilder {
 			}
 			return mapNnf(oldApp, result.extract());
 		}
+		var uvcn = rc.unboxedVariantCaseNorm;
+		if (uvcn != null) {
+			var uvn = uvcn.variantNorm;
+			var inputs = genRefs(oldApp.inputs);
+			var result = Array<SsaInstr>.new(uvn.size);
+			for (i < uvcn.fieldIndexes.length) {
+				for (j < uvcn.fieldIndexes[i].length) {
+					result[uvcn.fieldIndexes[i][j]] = inputs[uvcn.origRanges[i].0 + j];
+				}
+			}
+			result[uvn.size - 1] = newGraph.intConst(V3.getVariantTag(rc.oldType));
+			return mapNnf(oldApp, result);
+		}
 		if (m == null) {
 			// trivial constructor
 			var spec = IrSpec.new(op.typeArgs[0], op.typeArgs, null);
@@ -1098,11 +1118,19 @@ class SsaRaNormalizer extends SsaRebuilder {
 			normType(raField.receiver); // XXX: normType() side-effect of flattening
 			var rc = norm.ra.getClass(raField.receiver);
 			var vals = Array<SsaInstr>.new(nf.length);
-			var start = rc.dataNorm.normRanges[raField.orig.index].0;
-			for (i < vals.length) {
-				vals[i] = ninputs[start + i];
+			if (rc.dataNorm != null) {
+				var start = rc.dataNorm.normRanges[raField.orig.index].0;
+				for (i < vals.length) {
+					vals[i] = ninputs[start + i];
+				}
+				return mapNnf(oldApp, vals);
+			} else {
+				var indexes = rc.unboxedVariantCaseNorm.fieldIndexes[raField.orig.index];
+				for (i < indexes.length) {
+					vals[i] = ninputs[indexes[i]];
+				}
+				return mapNnf(oldApp, vals);
 			}
-			return mapNnf(oldApp, vals);
 		}
 		var receiver = ninputs[0];
 		if (nf.length == 1) {
