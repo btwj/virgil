@@ -88,7 +88,7 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 				ra.queue.add(normClassRecord, (rc, oldRecord, newRecord.values));
 			}
 			ra.prog.setComponentRecord(comp, newRecord);
-		} else if (rc.dataNorm == null) {
+		} else if (rc.variantNorm == null) {
 			// create and map new records to be normalized
 			for (l = rc.instances; l != null; l = l.tail) {
 				var oldRecord = l.head, newRecord = ra.prog.newRecord(tn.newType, rc.normFields.length);
@@ -110,9 +110,9 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 				var rm = l.head, m = rm.orig;
 				if (rm.norm != null) continue; // already done
 				var ftype = if(rm.spec == null, m.sig.funcType(), rm.spec.getMethodType());
-				if (rc.raFacts.RC_UNBOXED) {
+				if (rc.raFacts.RC_UNBOXED && DataVariantCaseNorm.?(rc.variantNorm)) {
 					// move flattened data type receiver to function sig
-					ftype = Function.prependParamTypes(rc.dataNorm.sub, ftype);
+					ftype = Function.prependParamTypes(rc.variantNorm.sub, ftype);
 				}
 				rm.funcNorm = FuncNorm.!(norm(ftype));
 				var typeParams = if(rm.spec != null, rm.spec.getTypes().methodTypeArgs);
@@ -269,8 +269,7 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 	}
 	// lay out a variant's fields, which may be flattened
 	def normVariant(t: Type, rc: RaClass) -> TypeNorm {
-		if (rc.dataNorm != null) return rc.dataNorm; // already unboxed
-		if (rc.unboxedVariantCaseNorm != null) return rc.unboxedVariantCaseNorm;
+		if (rc.variantNorm != null) return rc.variantNorm; // already unboxed
 		if (rc.orig.boxing == Boxing.BOXED) mapSimple(t); // XXX, ugly, don't recurse through explicitly boxed types
 
 		match (rc.recursive) {
@@ -281,7 +280,7 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 				rc.recursive = ON_STACK;
 				tryUnboxing(rc);
 				if (rc.recursive == ON_STACK) rc.recursive = 1;
-				if (rc.dataNorm != null) return rc.dataNorm;
+				if (rc.variantNorm != null) return rc.variantNorm;
 			}
 			// recursive or not; there was no data norm, so box
 		}
@@ -296,22 +295,34 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 		Terminal.put1("unboxing variant %q\n", rc.oldType.render);
 		
 		var vecT = Vector<Type>.new();
-		var indexes = Vector<Array<int>>.new();
+		var fieldIndexesInParent = Vector<Array<int>>.new();
+		var fieldIndexes = Vector<Array<int>>.new();
 
 		var tagType = V3.getVariantTagType(rc.oldType);
 		var allUnboxed = rc.orig.boxing == Boxing.UNBOXED;
 
+		var boxedIndex = -1;
+
 		for (l = rc.children; l != null; l = l.tail) {
-			if (!allUnboxed && rc.orig.boxing != Boxing.UNBOXED) {
+			var c = l.head;
+			if (!allUnboxed && c.orig.boxing != Boxing.UNBOXED) {
 				// Box this case
-				Terminal.put1("      boxed %q: ", l.head.oldType.render);
+				c.raFacts |= RaFact.RC_BOXED;
+				
+				if (boxedIndex < 0) {
+					boxedIndex = vecT.length;
+					vecT.put(rc.oldType);
+				}
+				var bvcn = BoxedVariantCaseNorm.new(c.oldType, AnyRef.TYPE, [AnyRef.TYPE]);
+				bvcn.boxedIndex = boxedIndex;
+				c.variantNorm = bvcn;
+				Terminal.put1("      boxed %q\n", l.head.oldType.render);
 				continue;
 			}
+
 			Terminal.put1("    unboxed %q: ", l.head.oldType.render);
-
-			var c = l.head;
+			
 			var of = c.orig.fields;
-
 			var vecO = Vector<Type>.new();
 			var origRanges = Array<(int, int)>.new(of.length);
 
@@ -324,6 +335,7 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 
 				var nf = Vector<Type>.new();
 				var curMapping = Vector<int>.new();
+				var indexes = Vector<int>.new();
 
 				if (rf.typeNorm != null) {
 					rf.typeNorm.addTo(nf);
@@ -334,7 +346,6 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 					nf = Vectors.of1(rf.orig.fieldType);
 				}
 
-				// TODO: find ref field for boxed
 				for (j < nf.length) {
 					var assigned = -1;
 
@@ -351,6 +362,7 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 						}
 					}
 
+					indexes.put(classFields.length);
 					if (assigned >= 0) {
 						curMapping.put(assigned);
 						indexesUsed.put(assigned);
@@ -368,31 +380,34 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 				norm(fieldType).addTo(vecO);
 
 				origRanges[i] = (origStart, vecO.length);
-				indexes.put(curMapping.extract());
+				fieldIndexesInParent.put(curMapping.extract());
+				fieldIndexes.put(indexes.extract());
 			}
 
 			classFields.put(tagType);
 			var classFieldsArray = classFields.extract();
 			
-			c.unboxedVariantCaseNorm = UnboxedVariantCaseNorm.new(
-				c.oldType, Tuple.newType(Lists.fromArray(classFieldsArray)), classFieldsArray, indexes.extract(), origRanges);
-			Terminal.put1("norm %q\n", c.unboxedVariantCaseNorm.render);
+			c.variantNorm = UnboxedVariantCaseNorm.new(
+				c.oldType, Tuple.newType(Lists.fromArray(classFieldsArray)), classFieldsArray, fieldIndexesInParent.extract(), fieldIndexes.extract(), origRanges);
+			c.raFacts |= RaFact.RC_UNBOXED;
+			Terminal.put1("norm %q\n", c.variantNorm.render);
 		}
 
 		vecT.put(tagType);
 		var vecTArray = vecT.extract();
-		rc.unboxedVariantNorm = UnboxedVariantNorm.new(rc.oldType, Tuple.newType(Lists.fromArray(vecTArray)), tagType, vecTArray);
-		
+		var parentNorm = UnboxedVariantParentNorm.new(rc.oldType, Tuple.newType(Lists.fromArray(vecTArray)), tagType, vecTArray);
 		for (l = rc.children; l != null; l = l.tail) {
-			l.head.unboxedVariantCaseNorm.variantNorm = rc.unboxedVariantNorm;
+			VariantCaseNorm.!(l.head.variantNorm).parentNorm = parentNorm;
 		}
+		rc.variantNorm = parentNorm;
+		rc.raFacts |= RaFact.RC_UNBOXED;
 
-		Terminal.put1("    norm %q\n", rc.unboxedVariantNorm.render);
+		Terminal.put1("    norm %q\n", rc.variantNorm.render);
 
 		return false;
 	}
 	def tryUnboxing(rc: RaClass) -> bool {
-		if (rc.normFields != null) return rc.dataNorm != null; // already done
+		if (rc.normFields != null) return rc.variantNorm != null; // already done
 
 		while (rc.parent != null) rc = rc.parent;
 		makeNormFields(rc);
@@ -458,12 +473,12 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 			normRanges[i] = (normStart, vecT.length);
 		}
 		var ta = vecT.extract();
-		rc.dataNorm = DataNorm.new(rc.oldType, Tuple.newType(Lists.fromArray(ta)), null, origRanges, normRanges, ta);
+		rc.variantNorm = DataVariantCaseNorm.new(rc.oldType, Tuple.newType(Lists.fromArray(ta)), null, origRanges, normRanges, ta);
 		rc.raFacts |= RaFact.RC_UNBOXED;
 		return true;
 	}
 	def setDataNormForChildren(rc: RaClass, tagType: IntType, sub: Array<Type>, facts: RaFact.set) {
-		rc.dataNorm = DataNorm.new(rc.oldType, tagType, tagType, NO_RANGES, NO_RANGES, sub);
+		rc.variantNorm = DataVariantCaseNorm.new(rc.oldType, tagType, tagType, NO_RANGES, NO_RANGES, sub);
 		rc.raFacts |= facts;
 		for (l = rc.children; l != null; l = l.tail) {
 			setDataNormForChildren(l.head, tagType, sub, facts);
@@ -531,7 +546,7 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 	}
 	// normalize a live instance of a class
 	def normClassRecord(rc: RaClass, oldRecord: Record, array: Array<Val>) {
-		if (rc.dataNorm != null && rc.dataNorm.tagType != null) {
+		if (rc.variantNorm != null && DataVariantCaseNorm.?(rc.variantNorm) && DataVariantCaseNorm.!(rc.variantNorm).tagType != null) {
 			array[0] = Int.box(V3.getVariantTag(oldRecord.rtype));
 		}
 		var rfs = rc.fields;
@@ -754,7 +769,7 @@ class ReachabilityNormalizer(config: NormalizerConfig, ra: ReachabilityAnalyzer)
 			var receiver = ra.oldIr.getIrClass(ctype);
 			var root = ra.oldIr.getIrClass(V3.getRootType(ctype));
 			var rc = ra.getClass(rm.receiver);
-			if (false && rc.dataNorm != null) { // TODO: disable generation of compare method bodies
+			if (false && rc.variantNorm != null) { // TODO: disable generation of compare method bodies
 				// flattened data types will have inlined compare
 				rm.orig.ssa = SsaGraph.new([], Bool.TYPE);
 				rm.orig.ssa.startBlock.append(SsaReturn.new([rm.orig.ssa.falseConst()]));

@@ -139,20 +139,44 @@ class DataNorm extends TypeNorm {
 	}
 }
 
-class UnboxedVariantNorm extends TypeNorm {
+// Norm for variants (both superclass and case class)
+class VariantNorm extends TypeNorm {
+	new (oldType: Type, newType: Type, sub: Array<Type>)
+		super(oldType, newType, sub) {
+	}
+}
+
+class VariantParentNorm extends VariantNorm {
+	new (oldType: Type, newType: Type, sub: Array<Type>)
+		super(oldType, newType, sub) {
+	}
+}
+
+// Norm of a variant with unboxed cases
+class UnboxedVariantParentNorm extends VariantParentNorm {
 	def tagType: IntType;
+	var boxedIndex = -1;
 
 	new (oldType: Type, newType: Type, tagType, sub: Array<Type>)
 		super(oldType, newType, sub) {
 	}
 }
 
-class UnboxedVariantCaseNorm extends TypeNorm {
-	var variantNorm: UnboxedVariantNorm;
+// Norm of the variant case
+class VariantCaseNorm extends VariantNorm {
+	var parentNorm: VariantParentNorm;
+
+	new (oldType: Type, newType: Type, sub: Array<Type>)
+		super(oldType, newType, sub) {
+	}
+}
+
+class UnboxedVariantCaseNorm extends VariantCaseNorm {
+	def fieldIndexesInParent: Array<Array<int>>; // indices in parent norm
 	def fieldIndexes: Array<Array<int>>;
 	def origRanges: Array<(int, int)>;
 
-	new (oldType: Type, newType: Type, sub: Array<Type>, fieldIndexes, origRanges)
+	new (oldType: Type, newType: Type, sub: Array<Type>, fieldIndexesInParent, fieldIndexes, origRanges)
 		super(oldType, newType, sub) {
 	}
 
@@ -165,6 +189,16 @@ class UnboxedVariantCaseNorm extends TypeNorm {
 			sub[i].render(buf);
 		}
 		buf.puts("] (");
+		for (i < fieldIndexesInParent.length) {
+			if (i > 0) buf.csp();
+			buf.putc('(');
+			for (j < fieldIndexesInParent[i].length) {
+				if (j > 0) buf.csp();
+				buf.put1("%d", fieldIndexesInParent[i][j]);
+			}
+			buf.putc(')');
+		}
+		buf.puts(") (");
 		for (i < fieldIndexes.length) {
 			if (i > 0) buf.csp();
 			buf.putc('(');
@@ -176,5 +210,23 @@ class UnboxedVariantCaseNorm extends TypeNorm {
 		}
 		buf.putc(')');
 		return buf;
+	}
+}
+
+class BoxedVariantCaseNorm extends VariantCaseNorm {
+	var boxedIndex = -1;
+	
+	new (oldType: Type, newType: Type, sub: Array<Type>)
+		super(oldType, newType, sub) {
+	}
+}
+
+class DataVariantCaseNorm extends VariantCaseNorm {
+	def tagType: IntType;
+	def origRanges: Array<(int, int)>;
+	def normRanges: Array<(int, int)>;
+
+	new(oldType: Type, newType: Type, tagType, origRanges, normRanges, sub: Array<Type>)
+		super(oldType, newType, sub) {
 	}
 }
